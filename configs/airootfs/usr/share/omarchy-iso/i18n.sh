@@ -35,17 +35,18 @@ i18n_translated() {
 }
 
 # The kernel's console fonts carry only the IBM PC character set, so a Linux VT
-# gets Terminus, patched for the logo, at the size the kernel picked.
+# gets Terminus, patched for the logo, at the size the kernel picked. Nothing
+# here may fail the caller, which can be running under set -euo pipefail.
 i18n_console_font() {
-  local tty=$1 height terminus font=/run/omarchy-iso/console.psf
+  local tty=$1 height terminus font=${OMARCHY_ISO_CONSOLE_FONT:-/run/omarchy-iso/console.psf}
   [[ $tty == /dev/tty[0-9]* ]] || return 0
 
   if [[ ! -s $font ]]; then
-    height=$(showconsolefont -i -C "$tty" 2>/dev/null | sed -n 's/^[0-9]*x\([0-9]*\)x[0-9]*$/\1/p')
+    height=$(showconsolefont -i -C "$tty" 2>/dev/null | sed -n 's/^[0-9]*x\([0-9]*\)x[0-9]*$/\1/p') || height=16
     terminus=/usr/share/kbd/consolefonts/ter-v16b.psf.gz
     (( ${height:-16} >= 32 )) && terminus=/usr/share/kbd/consolefonts/ter-v32b.psf.gz
-    mkdir -p "$(dirname "$font")"
-    python3 "$OMARCHY_ISO_SHARE/console-font.py" "$terminus" "$font" || return 0
+    mkdir -p "$(dirname "$font")" 2>/dev/null || return 0
+    python3 "$OMARCHY_ISO_SHARE/console-font.py" "$terminus" "$font" 2>/dev/null || return 0
   fi
   setfont -C "$tty" "$font" 2>/dev/null || true
 }

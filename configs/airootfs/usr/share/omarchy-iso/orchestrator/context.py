@@ -27,7 +27,9 @@ def validate_language(language: Any, registry: Path | None = None) -> None:
         return
     if not isinstance(language, str) or not re.fullmatch(r"[a-z]{2,3}(-[A-Z]{2})?", language):
         raise RuntimeError(f"Unsupported language: {language!r}")
-    if registry.is_file() and language not in json.loads(registry.read_text()):
+    if language == "en":
+        return
+    if not registry.is_file() or language not in json.loads(registry.read_text()):
         raise RuntimeError(f"Unsupported language: {language!r}")
 
 

@@ -61,10 +61,11 @@ class CatalogTest(unittest.TestCase):
         self.catalogs = catalogs()
         self.english = self.catalogs["en"]
 
-    def test_every_translation_has_exactly_the_english_keys_and_placeholders(self):
+    def test_translations_only_carry_english_keys_with_their_placeholders(self):
+        # A missing key is allowed and shows in English, so a new string never waits on 35 translations.
         for code, catalog in self.catalogs.items():
             with self.subTest(code=code):
-                self.assertEqual(sorted(catalog), sorted(self.english))
+                self.assertLessEqual(set(catalog), set(self.english))
                 for key, text in catalog.items():
                     self.assertEqual(sorted(PLACEHOLDER.findall(text)), sorted(PLACEHOLDER.findall(self.english[key])), key)
 
@@ -127,7 +128,7 @@ class ConsoleFontTest(unittest.TestCase):
                 with self.subTest(size=size, code=code):
                     self.assertEqual(missing, [])
 
-    def test_half_blocks_fill_the_right_half_of_the_cell(self):
+    def test_half_blocks_fill_the_top_or_bottom_half_of_the_cell(self):
         module = console_font()
         upper = module.half_block(16, 32, True)
         self.assertEqual(upper[:2], b"\xff\xff")
@@ -154,6 +155,21 @@ class ShellLookupTest(unittest.TestCase):
             self.assertEqual(self.lookup('i18n_load ../da; t a.b x y', directory), "Disk x has y")
 
 
+class ConsoleFontLoadTest(unittest.TestCase):
+    def test_a_failing_font_probe_never_stops_a_strict_caller(self):
+        with tempfile.TemporaryDirectory() as directory:
+            stubs = Path(directory)
+            for tool in ("showconsolefont", "setfont", "python3"):
+                (stubs / tool).write_text("#!/bin/bash\nexit 1\n")
+                (stubs / tool).chmod(0o755)
+            result = subprocess.run(
+                ["bash", "-c", f'set -euo pipefail; source "{SHARE}/i18n.sh"; i18n_console_font /dev/tty1; echo survived'],
+                env={**os.environ, "PATH": f"{stubs}:{os.environ['PATH']}", "OMARCHY_ISO_CONSOLE_FONT": f"{stubs}/run/console.psf"},
+                capture_output=True, text=True,
+            )
+            self.assertEqual(result.stdout, "survived\n", result.stderr)
+
+
 class LanguageMarkerTest(unittest.TestCase):
     def marker(self, language):
         with tempfile.TemporaryDirectory() as directory:
@@ -177,6 +193,12 @@ class LanguageMarkerTest(unittest.TestCase):
             for code in ("xx", "../da", "da\n", 7):
                 with self.subTest(code=code), self.assertRaises(RuntimeError):
                     validate_language(code, registry)
+
+    def test_without_a_registry_only_english_is_accepted(self):
+        missing = Path("/nonexistent/locales.json")
+        validate_language("en", missing)
+        with self.assertRaises(RuntimeError):
+            validate_language("da", missing)
 
 
 if __name__ == "__main__":
