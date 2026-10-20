@@ -2,7 +2,7 @@
 reads them, drawable by the live console font, and the chosen language handed
 to the installed system."""
 
-import gzip
+import importlib.util
 import json
 import os
 import re
@@ -26,10 +26,10 @@ OMARCHY_CANDIDATES = (
     ROOT.parent / "omarchy",
     Path("/usr/share/omarchy"),
 )
-CONSOLE_FONT = Path("/usr/share/kbd/consolefonts/LatGrkCyr-8x16.psfu.gz")
+TERMINUS = Path("/usr/share/kbd/consolefonts")
 PLACEHOLDER = re.compile(r"%\d")
-# What the installer draws besides catalog text: the logo, gum's square borders, spinner and help.
-UI_GLYPHS = "▀▄█─│┌┐└┘├┤┬┴┼░▒▓•←↑→↓…—"
+# What the installer draws besides catalog text: the logo, gum's borders and spinner.
+UI_GLYPHS = "▀▄█╭╮╰╯─│▒▓•›…—"
 
 sys.path.insert(0, str(SHARE))
 sys.modules.setdefault("orchestrator.archinstall_adapter", types.ModuleType("orchestrator.archinstall_adapter"))
@@ -49,21 +49,11 @@ def omarchy_file(relative):
     return None
 
 
-def console_font_codepoints():
-    """The codepoints the stock console font's PSF1 unicode table maps to a glyph."""
-    data = gzip.decompress(CONSOLE_FONT.read_bytes())
-    count, height = (512 if data[2] & 1 else 256), data[3]
-    codepoints, position, index, in_sequence = set(), 4 + count * height, 0, False
-    while index < count and position + 1 < len(data):
-        value = int.from_bytes(data[position : position + 2], "little")
-        position += 2
-        if value == 0xFFFF:
-            index, in_sequence = index + 1, False
-        elif value == 0xFFFE:
-            in_sequence = True
-        elif not in_sequence:
-            codepoints.add(value)
-    return codepoints
+def console_font():
+    spec = importlib.util.spec_from_file_location("console_font", SHARE / "console-font.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 class CatalogTest(unittest.TestCase):
@@ -168,18 +158,30 @@ class LanguageDefaultsTest(unittest.TestCase):
 
 class ConsoleFontTest(unittest.TestCase):
     def test_the_live_console_font_draws_every_translated_string(self):
-        if not CONSOLE_FONT.is_file():
-            self.skipTest("kbd's console fonts are not installed")
         registry = omarchy_file("default/i18n/locales.json")
         names = json.loads(registry.read_text()) if registry else {}
-        drawable = console_font_codepoints()
-        for code, catalog in catalogs().items():
-            # The picker draws Uzbek's ʻ as ‘, which the font has.
-            name = names.get(code, {}).get("name", "").replace("ʻ", "‘")
-            text = "".join(catalog.values()) + name + UI_GLYPHS
-            missing = sorted({c for c in text if ord(c) > 0x7E and ord(c) not in drawable})
-            with self.subTest(code=code):
-                self.assertEqual(missing, [])
+        module = console_font()
+        for size in ("16", "32"):
+            source = TERMINUS / f"ter-v{size}b.psf.gz"
+            if not source.is_file():
+                self.skipTest("terminus-font is not installed")
+            import gzip
+
+            width, height, glyphs, table = module.read_font(gzip.decompress(source.read_bytes()))
+            module.patch(width, height, glyphs, table)
+            drawable = {codepoint for codepoints in table for codepoint in codepoints}
+            for code, catalog in catalogs().items():
+                text = "".join(catalog.values()) + names.get(code, {}).get("name", "") + UI_GLYPHS
+                missing = sorted({c for c in text if ord(c) > 0x7E and ord(c) not in drawable})
+                with self.subTest(size=size, code=code):
+                    self.assertEqual(missing, [])
+
+    def test_half_blocks_fill_the_top_or_bottom_half_of_the_cell(self):
+        module = console_font()
+        upper = module.half_block(16, 32, True)
+        self.assertEqual(upper[:2], b"\xff\xff")
+        self.assertEqual(upper[-2:], b"\x00\x00")
+        self.assertEqual(module.half_block(8, 16, False)[:8], bytes(8))
 
 
 class ShellLookupTest(unittest.TestCase):
@@ -205,28 +207,15 @@ class ConsoleFontLoadTest(unittest.TestCase):
     def test_a_failing_font_probe_never_stops_a_strict_caller(self):
         with tempfile.TemporaryDirectory() as directory:
             stubs = Path(directory)
-            for tool in ("showconsolefont", "setfont"):
+            for tool in ("showconsolefont", "setfont", "python3"):
                 (stubs / tool).write_text("#!/bin/bash\nexit 1\n")
                 (stubs / tool).chmod(0o755)
             result = subprocess.run(
                 ["bash", "-c", f'set -euo pipefail; source "{SHARE}/i18n.sh"; i18n_console_font /dev/tty1; echo survived'],
-                env={**os.environ, "PATH": f"{stubs}:{os.environ['PATH']}"},
+                env={**os.environ, "PATH": f"{stubs}:{os.environ['PATH']}", "OMARCHY_ISO_CONSOLE_FONT": f"{stubs}/run/console.psf"},
                 capture_output=True, text=True,
             )
             self.assertEqual(result.stdout, "survived\n", result.stderr)
-
-    def test_a_hidpi_console_gets_the_font_doubled(self):
-        with tempfile.TemporaryDirectory() as directory:
-            stubs = Path(directory)
-            (stubs / "showconsolefont").write_text("#!/bin/bash\necho 16x32x256\n")
-            (stubs / "setfont").write_text(f"#!/bin/bash\necho \"$*\" >{stubs}/setfont.args\n")
-            for tool in ("showconsolefont", "setfont"):
-                (stubs / tool).chmod(0o755)
-            subprocess.run(
-                ["bash", "-c", f'source "{SHARE}/i18n.sh"; i18n_console_font /dev/tty1'],
-                env={**os.environ, "PATH": f"{stubs}:{os.environ['PATH']}"}, check=True,
-            )
-            self.assertEqual((stubs / "setfont.args").read_text(), "-C /dev/tty1 -d LatGrkCyr-8x16\n")
 
 
 class LanguageMarkerTest(unittest.TestCase):
