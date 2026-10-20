@@ -81,6 +81,15 @@ class CatalogTest(unittest.TestCase):
                     if key.startswith("form.") and key.endswith(".prompt"):
                         self.assertTrue(text.endswith("> "))
 
+    def test_tips_fit_the_progress_screen_without_truncation(self):
+        # The dashboard cuts the tip line at the logo's 81 columns.
+        for code, catalog in self.catalogs.items():
+            line = catalog.get("progress.tipLine", self.english["progress.tipLine"])
+            for key, tip in catalog.items():
+                if key.startswith("progress.tip."):
+                    with self.subTest(code=code, key=key):
+                        self.assertLessEqual(len(line.replace("%1", tip)), 80)
+
     def test_codes_are_omarchy_languages(self):
         registry = omarchy_file("default/i18n/locales.json")
         for code in self.catalogs:

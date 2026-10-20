@@ -111,7 +111,7 @@
   "progress.tip.localSend": "Comparte archivos con celulares y laptops usando LocalSend",
   "progress.tip.webApps": "Convierte cualquier sitio en app con Instalar > App web en el menú",
   "progress.tip.terminal": "Super + Return abre una terminal, Super + Shift + Return el navegador",
-  "progress.tip.media": "Edita imágenes con Pinta, videos con Kdenlive y documentos con LibreOffice",
+  "progress.tip.media": "Edita imágenes con Pinta, videos con Kdenlive y textos con LibreOffice",
   "progress.tip.ocr": "Super + Ctrl + Print extrae texto de la pantalla con OCR",
   "progress.tip.screenshots": "Print toma una captura, Alt + Print graba la pantalla",
   "progress.tip.reminders": "Crea un recordatorio con Super + Ctrl + R",

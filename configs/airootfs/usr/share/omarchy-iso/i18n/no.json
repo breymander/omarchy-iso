@@ -109,7 +109,7 @@
   "progress.tip.superKey": "Super er Windows- eller Command-tasten på tastaturet ditt",
   "progress.tip.signPdfs": "Bruk Xournal++ til å signere PDF-er",
   "progress.tip.localSend": "Del filer med telefoner og bærbare med LocalSend",
-  "progress.tip.webApps": "Gjør et hvilket som helst nettsted til en app med Installer > Nettapp i menyen",
+  "progress.tip.webApps": "Gjør et nettsted til en app med Installer > Nettapp i menyen",
   "progress.tip.terminal": "Super + Return åpner en terminal, Super + Shift + Return nettleseren",
   "progress.tip.media": "Rediger bilder i Pinta, video i Kdenlive og dokumenter i LibreOffice",
   "progress.tip.ocr": "Super + Ctrl + Print henter tekst fra skjermen med OCR",
