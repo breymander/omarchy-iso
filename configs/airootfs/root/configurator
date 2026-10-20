@@ -280,7 +280,7 @@ tzupdate() {
 language_label() {
   local field=englishName
   i18n_translated "$1" && field=name
-  jq -r --arg code "$1" --arg field "$field" '.[$code][$field] // $code' "$LANGUAGES_JSON" 2>/dev/null || printf '%s' "$1"
+  jq -r --arg code "$1" --arg field "$field" '.[$code][$field] // $code | gsub("ʻ"; "‘")' "$LANGUAGES_JSON" 2>/dev/null || printf '%s' "$1"
 }
 
 # "label<TAB>code" rows, English first and the rest alphabetical by what is shown.
@@ -289,7 +289,7 @@ language_rows() {
   translated=$(cd "$OMARCHY_ISO_I18N_DIR" && printf '%s\n' *.json | sed 's/\.json$//' | jq -R . | jq -sc .)
   jq -r --argjson translated "$translated" '
     to_entries
-    | map({code: .key, label: (if (.key | IN($translated[])) then .value.name else .value.englishName end)})
+    | map({code: .key, label: (if (.key | IN($translated[])) then .value.name else .value.englishName end | gsub("ʻ"; "‘"))})
     | sort_by(.code != "en", (.label | sub("^Í"; "I") | sub("^Č"; "C") | ascii_downcase))
     | .[] | "\(.label)\t\(.code)"
   ' "$LANGUAGES_JSON"
@@ -431,7 +431,7 @@ $(t summary.hostname),$hostname
 $(t summary.timezone),$timezone
 $(t summary.keyboard),$keyboard
 $(t summary.language),$(language_label "$language")" |
-      gum table -s "," -p | sed "s/^/${PADDING_LEFT_SPACES}/"
+      gum table -s "," -p --border normal | sed "s/^/${PADDING_LEFT_SPACES}/"
 
     echo
     if gum confirm --affirmative "$(t common.yes)" --negative "$(t common.change)" "$(t summary.prompt)"; then
