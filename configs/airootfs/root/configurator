@@ -55,7 +55,8 @@ gum() {
   [[ " $* " == *" Select keyboard layout "* ]] && keyboard_list=true
   for arg in "$@"; do
     if $keyboard_list && [[ $previous == "--selected" && -n ${OMARCHY_FORM_KEYBOARD_DEFAULT:-} ]]; then
-      arg=$OMARCHY_FORM_KEYBOARD_DEFAULT
+      # gum splits --selected on commas, as in "Chinese (Simplified, Pinyin)".
+      arg=${OMARCHY_FORM_KEYBOARD_DEFAULT//,/\\,}
     fi
     previous=$arg
     [[ -n $arg && -n ${OMARCHY_ISO_FORM_TEXT[$arg]:-} ]] && arg=${OMARCHY_ISO_FORM_TEXT[$arg]}
