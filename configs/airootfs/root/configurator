@@ -47,10 +47,17 @@ source "$INSTALLER_I18N"
 i18n_load en
 
 # The shared setup form speaks English; translate its strings on their way to gum.
+# A form that predates OMARCHY_FORM_KEYBOARD_DEFAULT always preselects English
+# (US), so the keyboard list gets the language's layout here instead.
 gum() {
-  local arg
+  local arg previous="" keyboard_list=false
   local -a args=()
+  [[ " $* " == *" Select keyboard layout "* ]] && keyboard_list=true
   for arg in "$@"; do
+    if $keyboard_list && [[ $previous == "--selected" && -n ${OMARCHY_FORM_KEYBOARD_DEFAULT:-} ]]; then
+      arg=$OMARCHY_FORM_KEYBOARD_DEFAULT
+    fi
+    previous=$arg
     [[ -n $arg && -n ${OMARCHY_ISO_FORM_TEXT[$arg]:-} ]] && arg=${OMARCHY_ISO_FORM_TEXT[$arg]}
     args+=("$arg")
   done
@@ -239,6 +246,37 @@ jq -e --arg code "$language" 'has($code)' "$LANGUAGES_JSON" >/dev/null 2>&1 || l
 ask_language=true
 [[ $(jq -r '.language_prompt' "$ISO_PRESET" 2>/dev/null) == "false" ]] && ask_language=false
 
+# The keyboard list preselects the layout that goes with the language, unless the
+# media's preset names a keyboard of its own. OMARCHY_FORM_KEYBOARD_DEFAULT is the
+# setup form's own default (omacom/omarchy#15522); gum() covers a form without it.
+LANGUAGE_DEFAULTS="${LANGUAGE_DEFAULTS:-$OMARCHY_ISO_SHARE/language-defaults.json}"
+preset_keyboard=$(jq -r '.keyboard // empty' "$ISO_PRESET" 2>/dev/null)
+preset_timezone=$(jq -r '.timezone // empty' "$ISO_PRESET" 2>/dev/null)
+
+language_default() {
+  jq -r --arg code "$language" --arg field "$1" '.[$code][$field] // empty' "$LANGUAGE_DEFAULTS" 2>/dev/null
+}
+
+default_keyboard_for_language() {
+  OMARCHY_FORM_KEYBOARD_DEFAULT=${preset_keyboard:-$(language_default keyboard)}
+  OMARCHY_FORM_KEYBOARD_DEFAULT=${OMARCHY_FORM_KEYBOARD_DEFAULT:-English (US)}
+  export OMARCHY_FORM_KEYBOARD_DEFAULT
+}
+
+# The setup form preselects the timezone tzupdate guesses from the network. A
+# preset's timezone wins, and when the guess fails (offline, say) the language's
+# country stands in; languages with no single home country have none.
+tzupdate() {
+  if [[ ${1:-} != "-p" ]]; then
+    command tzupdate "$@"
+    return
+  fi
+  local zone=$preset_timezone
+  [[ -n $zone ]] || zone=$(command tzupdate -p 2>/dev/null) || zone=""
+  [[ -n $zone ]] || zone=$(language_default timezone)
+  [[ -n $zone ]] && printf '%s\n' "$zone"
+}
+
 language_label() {
   local field=englishName
   i18n_translated "$1" && field=name
@@ -257,6 +295,9 @@ language_rows() {
   ' "$LANGUAGES_JSON"
 }
 
+# The first screen, so it carries the intro and the hidden Ctrl+C entry into
+# deferred provisioning; before a language is picked they read in English.
+# Callers re-check defer_provisioning after this returns.
 language_form() {
   local choice status
 
@@ -264,30 +305,39 @@ language_form() {
     while true; do
       clear_logo
       echo
+      say "$(t keyboard.intro)"
+      say --foreground 8 "$(t keyboard.anotherOwner)"
+      echo
       choice=$(language_rows | gum choose --height 10 --label-delimiter $'\t' \
         --selected "$(language_label "$language")" --header "$(t language.header)") && status=0 || status=$?
-      # Nothing precedes the first screen, so Esc and Ctrl+C ask again.
       ((status == 0)) && [[ -n $choice ]] && break
+
+      if ((status == OMARCHY_FORM_SIGNAL)) && confirm_prepare_for_another_owner; then
+        defer_provisioning=true
+        return 0
+      fi
+      # Esc, or a declined Ctrl+C: nothing precedes the first screen, so ask again.
     done
     language=$choice
   fi
 
   i18n_load "$language"
+  default_keyboard_for_language
 }
 
 # STEP 1: KEYBOARD LAYOUT
 
 keyboard_form() {
-  # Ctrl+C is the hidden entry into deferred provisioning, offered on every
-  # visit: the user step unwinds back here and nothing is on disk yet. Callers
-  # re-check defer_provisioning after this returns.
   local status
 
   while true; do
     clear_logo
     echo
-    say "$(t keyboard.intro)"
-    say --foreground 8 "$(t keyboard.anotherOwner)"
+    # Without the language screen, this is the first one and carries its intro.
+    if ! $ask_language; then
+      say "$(t keyboard.intro)"
+      say --foreground 8 "$(t keyboard.anotherOwner)"
+    fi
     if ! i18n_translated "$language"; then
       # English on purpose: there is no catalog for this language to say it in.
       say --foreground 8 "The installer stays in English. Omarchy will be in $(language_label "$language") once installed."
@@ -297,18 +347,19 @@ keyboard_form() {
     omarchy_prompt_keyboard && status=0 || status=$?
     ((status == 0)) && break
 
-    # Esc means "back", to the language picker.
+    # Esc means "back", to the language picker, which can arm deferred provisioning.
     if ((status == OMARCHY_FORM_BACK)); then
       language_form
+      $defer_provisioning && return 0
       continue
     fi
 
     if ((status == OMARCHY_FORM_SIGNAL)); then
-      if confirm_prepare_for_another_owner; then
+      if ! $ask_language && confirm_prepare_for_another_owner; then
         defer_provisioning=true
         return 0
       fi
-      continue # declined: back to the keyboard picker
+      continue
     fi
     abort
   done
@@ -1181,11 +1232,11 @@ greeter
 
 language_form
 
-keyboard_form
+$defer_provisioning || keyboard_form
 
 # Normal install: keyboard (loaded above, so the LUKS passphrase is typed under
 # the right layout) → user → disk → install mode. The user step can unwind to
-# the keyboard screen and arm deferral there, hence the second check.
+# the language screen and arm deferral there, hence the second check.
 if ! $defer_provisioning; then
   user_step
 fi

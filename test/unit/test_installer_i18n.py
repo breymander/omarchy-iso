@@ -117,6 +117,45 @@ class CatalogTest(unittest.TestCase):
                 self.assertIn(f'"{english}"', text, key)
 
 
+class LanguageDefaultsTest(unittest.TestCase):
+    def setUp(self):
+        self.defaults = json.loads((SHARE / "language-defaults.json").read_text())
+
+    def test_every_language_in_the_picker_has_defaults(self):
+        self.assertLessEqual(set(catalogs()), set(self.defaults))
+        registry = omarchy_file("default/i18n/locales.json")
+        if registry is None:
+            self.skipTest("no Omarchy runtime to read the language registry from")
+        self.assertEqual(set(self.defaults), set(json.loads(registry.read_text())))
+
+    def test_every_keyboard_is_a_row_of_the_setup_form(self):
+        form = omarchy_file("install/provisioning/setup-form.sh")
+        if form is None:
+            self.skipTest("no Omarchy runtime to read the setup form from")
+        rows = re.search(r"OMARCHY_KEYBOARD_LAYOUTS=\$'(.*?)'\n", form.read_text(), re.DOTALL).group(1).splitlines()
+        labels = {row.split("|")[0] for row in rows}
+        for code, defaults in self.defaults.items():
+            with self.subTest(code=code):
+                self.assertIn(defaults["keyboard"], labels)
+
+    def test_every_timezone_is_a_zone_the_timezone_list_offers(self):
+        # timedatectl list-timezones offers tzdata's zones and links, read the same way here.
+        tzdata = Path("/usr/share/zoneinfo/tzdata.zi")
+        if not tzdata.is_file():
+            self.skipTest("tzdata is not installed")
+        zones = set()
+        for line in tzdata.read_text().splitlines():
+            fields = line.split()
+            if fields[:1] == ["Z"]:
+                zones.add(fields[1])
+            elif fields[:1] == ["L"]:
+                zones.add(fields[2])
+        for code, defaults in self.defaults.items():
+            if "timezone" in defaults:
+                with self.subTest(code=code):
+                    self.assertIn(defaults["timezone"], zones)
+
+
 class ConsoleFontTest(unittest.TestCase):
     def test_the_live_console_font_draws_every_translated_string(self):
         registry = omarchy_file("default/i18n/locales.json")

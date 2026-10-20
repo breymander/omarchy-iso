@@ -660,15 +660,10 @@ drive_configurator() {
   capture_console "success-installer-00-greeter"
   press ret
 
-  # Language comes first, with English preselected.
-  wait_for_screen "Language" 60
+  # Language is the first screen, with English preselected. Ctrl+C there is the
+  # hidden entry into deferred provisioning; a normal install picks a language.
+  wait_for_screen "Language" 300
   capture_console "success-installer-00-language"
-  press ret
-
-  # Keyboard follows. Ctrl+C there is the hidden entry into deferred provisioning
-  # mode; a normal install just selects the layout.
-  wait_for_screen "keyboard layout" 300
-  capture_console "success-installer-01-keyboard-layout"
 
   if $PROVISION; then
     press ctrl-c # arm "prepare for another owner"
@@ -697,6 +692,10 @@ drive_configurator() {
     capture_console "success-installer-13-install-started"
     return 0
   fi
+
+  press ret
+  wait_for_screen "keyboard layout" 60
+  capture_console "success-installer-01-keyboard-layout"
 
   if [[ $KEYBOARD_LABEL != "English (US)" ]]; then
     select_keyboard "$KEYBOARD_LABEL"
