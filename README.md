@@ -215,7 +215,7 @@ The configurator asks for a language first, on the screen that carries the intro
 
 Catalogs exist only for languages the live console can draw. The kernel's own console fonts carry just the IBM PC character set, so the installer loads kbd's `LatGrkCyr-8x16`, doubled with `setfont -d` where the kernel picked a HiDPI font. It covers Latin, Greek, Cyrillic and the half blocks the logo is drawn with. CJK, Arabic, Hebrew, the Indic scripts, Thai and Vietnamese are beyond any 512-glyph console font.
 
-To add a string, put it in `en.json` and print it with `t <key> [args]`, where `%1`, `%2` take the arguments. A catalog that lacks the key shows it in English until a translation lands. `test/unit/test_installer_i18n.py` fails on a key English does not have, on placeholders that differ from English, and on a character the patched font cannot draw. The `form.*` keys translate the setup form vendored from Omarchy by matching its English text, so they have to follow that file's wording.
+To add a string, put it in `en.json` and print it with `t <key> [args]`, where `%1`, `%2` take the arguments. A catalog that lacks the key shows it in English until a translation lands. `test/unit/test_installer_i18n.py` fails on a key English does not have, on placeholders that differ from English, and on a character the patched font cannot draw. The setup form vendored from Omarchy translates its own strings from Omarchy's catalogs, in the language the configurator names in `OMARCHY_FORM_LANGUAGE`, and takes the keyboard and timezone defaults through `OMARCHY_FORM_KEYBOARD_DEFAULT`, `OMARCHY_FORM_TIMEZONE_DEFAULT` and `OMARCHY_FORM_TIMEZONE_FALLBACK`.
 
 ## Creating the ISO
 
