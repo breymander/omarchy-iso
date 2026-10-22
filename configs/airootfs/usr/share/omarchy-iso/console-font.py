@@ -33,6 +33,41 @@ ALIASES = {
 }
 
 
+# Terminus draws в at capital height, д with one descender (the Bulgarian
+# forms) and и like u, so "Иван" reads as "ИВан" and "и" as "u" to Russian
+# readers. These are Terminus's own alternates for them, alt/dv1.diff and
+# alt/ij1.diff in the 4.49.1 source (ter-u16b, ter-u32b), plus the Ф of Debian's
+# console-setup build (Uni2-TerminusBold16, Uni2-TerminusBold32x16), which keeps
+# the stem on both sides of the bowl.
+RUSSIAN_FORMS = {
+    (8, 16): {
+        0x0432: "0000000000fcc6c6fcc6c6fc00000000",  # в
+        0x0434: "00000000003e6666666666ffc3000000",  # д
+        0x0438: "0000000000c6c6cedef6e6c600000000",  # и
+        0x0439: "00006c3800c6c6cedef6e6c600000000",  # й
+        0x045D: "0000301800c6c6cedef6e6c600000000",  # ѝ
+        0x04E3: "0000007c00c6c6cedef6e6c600000000",  # ӣ
+        0x0424: "0000107cd6d6d6d6d6d67c1000000000",  # Ф
+    },
+    (16, 32): {
+        0x0432: "0000000000000000000000000000000000000000000000007fe07ff070787038"  # в
+                "703870387ff07ff8703c701c701c703c7ff87ff0000000000000000000000000",
+        0x0434: "00000000000000000000000000000000000000000000000007fc0ffc1e1c1c1c"  # д
+                "1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c3ffc7ffe700e700e700e700e00000000",
+        0x0438: "000000000000000000000000000000000000000000000000701c701c701c703c"  # и
+                "707c70fc71dc739c771c7e1c7c1c781c701c701c000000000000000000000000",
+        0x0439: "0000000000000000000000001c701c700fe007c000000000701c701c701c703c"  # й
+                "707c70fc71dc739c771c7e1c7c1c781c701c701c000000000000000000000000",
+        0x045D: "0000000000000000000000001c000e000700038000000000701c701c701c703c"  # ѝ
+                "707c70fc71dc739c771c7e1c7c1c781c701c701c000000000000000000000000",
+        0x04E3: "000000000000000000000000000000001ff01ff000000000701c701c701c703c"  # ӣ
+                "707c70fc71dc739c771c7e1c7c1c781c701c701c000000000000000000000000",
+        0x0424: "000000000000000000000000038003801ff03ff87bbc739c739c739c739c739c"  # Ф
+                "739c739c739c739c739c7bbc3ff81ff003800380000000000000000000000000",
+    },
+}
+
+
 def read_font(data: bytes) -> tuple[int, int, list[bytes], list[list[int]]]:
     if data[:2] == PSF1_MAGIC:
         mode, height = data[2], data[3]
@@ -82,6 +117,13 @@ def patch(width: int, height: int, glyphs: list[bytes], table: list[list[int]]) 
             raise ValueError(f"U+{codepoint:04X} shares its glyph with {table[index]}")
         glyphs[index] = half_block(width, height, block == UPPER_HALF)
         table[index] = [block]
+    for codepoint, bitmap in RUSSIAN_FORMS.get((width, height), {}).items():
+        index = owner.get(codepoint)
+        if index is not None and table[index] == [codepoint]:
+            glyph = bytes.fromhex(bitmap)
+            if len(glyph) != len(glyphs[index]):
+                raise ValueError(f"U+{codepoint:04X} is {len(glyph)} bytes, not {len(glyphs[index])}")
+            glyphs[index] = glyph
     for codepoint, glyph_of in ALIASES.items():
         if codepoint not in owner and glyph_of in owner:
             table[owner[glyph_of]].append(codepoint)
