@@ -2,10 +2,10 @@
 reads them, drawable by the live console font, and the chosen language handed
 to the installed system."""
 
+import importlib.util
 import json
 import os
 import re
-import struct
 import subprocess
 import sys
 import tempfile
@@ -26,7 +26,6 @@ OMARCHY_CANDIDATES = (
     ROOT.parent / "omarchy",
     Path("/usr/share/omarchy"),
 )
-FONTS = SHARE / "fonts"
 TERMINUS = Path("/usr/share/kbd/consolefonts")
 PLACEHOLDER = re.compile(r"%\d")
 # What the installer draws besides catalog text: the logo, gum's borders and spinner.
@@ -50,21 +49,11 @@ def omarchy_file(relative):
     return None
 
 
-def console_fonts():
-    """(width, height, glyph count, {character: glyph}) of each shipped console font."""
-    for size in ("16", "32"):
-        data = (FONTS / f"omarchy-live{size}.psf").read_bytes()
-        assert data[:4] == b"\x72\xb5\x4a\x86", "not a PSF2 font"
-        _, _, header, _, count, glyph_size, height, width = struct.unpack_from("<8I", data)
-        glyphs = [data[header + i * glyph_size : header + (i + 1) * glyph_size] for i in range(count)]
-        entries = data[header + count * glyph_size :].split(b"\xff")[:count]
-        glyph = {char: glyphs[index] for index, entry in enumerate(entries)
-                 for char in entry.split(b"\xfe")[0].decode("utf-8")}
-        yield size, width, height, count, glyph
-
-
-def pixels(glyph):
-    return [(byte >> bit) & 1 for byte in glyph for bit in range(7, -1, -1)]
+def console_font():
+    spec = importlib.util.spec_from_file_location("console_font", SHARE / "console-font.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 class CatalogTest(unittest.TestCase):
@@ -168,41 +157,46 @@ class LanguageDefaultsTest(unittest.TestCase):
 
 
 class ConsoleFontTest(unittest.TestCase):
-    def test_the_live_console_fonts_draw_every_translated_string(self):
+    def test_the_live_console_font_draws_every_translated_string(self):
         registry = omarchy_file("default/i18n/locales.json")
         names = json.loads(registry.read_text()) if registry else {}
-        for size, _, _, _, glyph in console_fonts():
+        module = console_font()
+        for size in ("16", "32"):
+            source = TERMINUS / f"ter-v{size}b.psf.gz"
+            if not source.is_file():
+                self.skipTest("terminus-font is not installed")
+            import gzip
+
+            width, height, glyphs, table = module.read_font(gzip.decompress(source.read_bytes()))
+            module.patch(width, height, glyphs, table)
+            drawable = {codepoint for codepoints in table for codepoint in codepoints}
             for code, catalog in catalogs().items():
                 text = "".join(catalog.values()) + names.get(code, {}).get("name", "") + UI_GLYPHS
-                missing = sorted({c for c in text if ord(c) > 0x7E and c not in glyph})
+                missing = sorted({c for c in text if ord(c) > 0x7E and ord(c) not in drawable})
                 with self.subTest(size=size, code=code):
                     self.assertEqual(missing, [])
 
-    def test_each_font_fills_the_cell_the_kernel_picks(self):
-        self.assertEqual([(w, h, n) for _, w, h, n, _ in console_fonts()], [(8, 16, 512), (16, 32, 512)])
+    def test_cyrillic_ve_de_and_i_take_their_russian_forms(self):
+        module = console_font()
+        import gzip
 
-    def test_letters_terminus_draws_alike_look_different(self):
-        # Share of a pair's pixels that differ, of the inkier glyph's ink:
-        # Terminus has 0.04 for б Б and υ u and 0.24 for y u at 16x32.
-        for size, _, _, _, glyph in console_fonts():
-            for pair in ("бБ", "υu", "yu"):
-                a, b = pixels(glyph[pair[0]]), pixels(glyph[pair[1]])
-                share = sum(x != y for x, y in zip(a, b)) / max(sum(a), sum(b))
-                with self.subTest(size=size, pair=pair):
-                    self.assertGreater(share, 0.3)
-
-    def test_letters_terminus_shares_a_glyph_between_have_their_own(self):
-        for size, _, _, _, glyph in console_fonts():
-            for pair in ("vν", "пπ", "γү", "ħћ", "-–", "иu"):
-                with self.subTest(size=size, pair=pair):
-                    self.assertNotEqual(glyph[pair[0]], glyph[pair[1]])
-
-    def test_cyrillic_ve_and_de_take_their_russian_forms(self):
-        for size, width, height, _, glyph in console_fonts():
+        for size in ("16", "32"):
+            source = TERMINUS / f"ter-v{size}b.psf.gz"
+            if not source.is_file():
+                self.skipTest("terminus-font is not installed")
+            width, height, glyphs, table = module.read_font(gzip.decompress(source.read_bytes()))
+            module.patch(width, height, glyphs, table)
             row_bytes = (width + 7) // 8
 
+            def glyph_of(char):
+                return glyphs[next(i for i, codepoints in enumerate(table) if ord(char) in codepoints)]
+
+            def inked(char):
+                glyph = glyph_of(char)
+                return [any(glyph[row * row_bytes:(row + 1) * row_bytes]) for row in range(height)]
+
             def rows(char):
-                ink = [any(glyph[char][row * row_bytes:(row + 1) * row_bytes]) for row in range(height)]
+                ink = inked(char)
                 return ink.index(True), len(ink) - 1 - ink[::-1].index(True)
 
             with self.subTest(size=size):
@@ -211,33 +205,37 @@ class ConsoleFontTest(unittest.TestCase):
                 self.assertLess(rows("В")[0], rows("в")[0])
                 # д's foot reaches below the baseline, as у's tail does.
                 self.assertGreater(rows("д")[1], rows("а")[1])
+                # и has its diagonal, so it doesn't read as u.
+                self.assertNotEqual(glyph_of("и"), glyph_of("u"))
 
-    def test_the_logo_blocks_fill_the_whole_or_half_the_cell(self):
-        for size, width, height, _, glyph in console_fonts():
-            half = width * height // 2
+    def test_patch_redraws_only_its_own_glyphs(self):
+        module = console_font()
+        import gzip
+
+        for size in ("16", "32"):
+            source = TERMINUS / f"ter-v{size}b.psf.gz"
+            if not source.is_file():
+                self.skipTest("terminus-font is not installed")
+            width, height, glyphs, table = module.read_font(gzip.decompress(source.read_bytes()))
+            original = list(glyphs)
+            try:
+                module.patch(width, height, glyphs, table)
+            except ValueError as error:
+                self.fail(error)
+            redrawn = {codepoint for index, glyph in enumerate(glyphs) if glyph != original[index]
+                       for codepoint in table[index]}
+
             with self.subTest(size=size):
-                self.assertEqual(pixels(glyph["█"]), [1] * (2 * half))
-                self.assertEqual(pixels(glyph["▀"]), [1] * half + [0] * half)
-                self.assertEqual(pixels(glyph["▄"]), [0] * half + [1] * half)
+                self.assertEqual({len(glyph) for glyph in glyphs}, {len(original[0])})
+                expected = {module.UPPER_HALF, module.LOWER_HALF} | set(module.RUSSIAN_FORMS[(width, height)])
+                self.assertEqual(redrawn, expected)
 
-    def test_the_fonts_rebuild_from_their_sources(self):
-        ttf = Path(os.environ.get("DEJAVU_TTF_DIR", "/usr/share/fonts/TTF"))
-        try:
-            import freetype  # noqa: F401
-        except ImportError:
-            self.skipTest("freetype-py is not installed")
-        if not (ttf / "DejaVuSansMono.ttf").is_file() or not (TERMINUS / "ter-v16b.psf.gz").is_file():
-            self.skipTest("DejaVu or terminus-font is not installed")
-        builds = {"16": ("DejaVuSansMono.ttf", "DejaVuSans.ttf", "13"),
-                  "32": ("DejaVuSansMono-Bold.ttf", "DejaVuSans-Bold.ttf", "26")}
-        with tempfile.TemporaryDirectory() as directory:
-            for size, (mono, sans, ppem) in builds.items():
-                output = Path(directory) / f"{size}.psf"
-                subprocess.run([sys.executable, str(ROOT / "builder/console-font/dejavu-psf.py"),
-                                f"{ttf / mono},{ttf / sans}", str(TERMINUS / f"ter-v{size}b.psf.gz"),
-                                str(output), ppem, ppem], check=True, capture_output=True)
-                with self.subTest(size=size):
-                    self.assertEqual(output.read_bytes(), (FONTS / f"omarchy-live{size}.psf").read_bytes())
+    def test_half_blocks_fill_the_top_or_bottom_half_of_the_cell(self):
+        module = console_font()
+        upper = module.half_block(16, 32, True)
+        self.assertEqual(upper[:2], b"\xff\xff")
+        self.assertEqual(upper[-2:], b"\x00\x00")
+        self.assertEqual(module.half_block(8, 16, False)[:8], bytes(8))
 
 
 class ShellLookupTest(unittest.TestCase):
@@ -260,28 +258,18 @@ class ShellLookupTest(unittest.TestCase):
 
 
 class ConsoleFontLoadTest(unittest.TestCase):
-    def load(self, probe):
+    def test_a_failing_font_probe_never_stops_a_strict_caller(self):
         with tempfile.TemporaryDirectory() as directory:
             stubs = Path(directory)
-            (stubs / "showconsolefont").write_text(f"#!/bin/bash\n{probe}\n")
-            (stubs / "setfont").write_text(f'#!/bin/bash\necho "$@" > {stubs}/setfont.args\n')
-            for tool in ("showconsolefont", "setfont"):
+            for tool in ("showconsolefont", "setfont", "python3"):
+                (stubs / tool).write_text("#!/bin/bash\nexit 1\n")
                 (stubs / tool).chmod(0o755)
             result = subprocess.run(
                 ["bash", "-c", f'set -euo pipefail; source "{SHARE}/i18n.sh"; i18n_console_font /dev/tty1; echo survived'],
-                env={**os.environ, "PATH": f"{stubs}:{os.environ['PATH']}"}, capture_output=True, text=True,
+                env={**os.environ, "PATH": f"{stubs}:{os.environ['PATH']}", "OMARCHY_ISO_CONSOLE_FONT": f"{stubs}/run/console.psf"},
+                capture_output=True, text=True,
             )
-            args = (stubs / "setfont.args").read_text().split() if (stubs / "setfont.args").exists() else []
-            return result.stdout, args
-
-    def test_the_font_follows_the_cell_size_the_kernel_picked(self):
-        self.assertEqual(self.load("echo 16x32x512")[1][-1], str(FONTS / "omarchy-live32.psf"))
-        self.assertEqual(self.load("echo 8x16x512")[1][-1], str(FONTS / "omarchy-live16.psf"))
-
-    def test_a_failing_font_probe_never_stops_a_strict_caller(self):
-        stdout, args = self.load("exit 1")
-        self.assertEqual(stdout, "survived\n")
-        self.assertEqual(args[-1], str(FONTS / "omarchy-live16.psf"))
+            self.assertEqual(result.stdout, "survived\n", result.stderr)
 
 
 class LanguageMarkerTest(unittest.TestCase):
