@@ -165,6 +165,60 @@ class ConsoleFontTest(unittest.TestCase):
                 with self.subTest(size=size, code=code):
                     self.assertEqual(missing, [])
 
+    def test_cyrillic_ve_de_and_i_take_their_russian_forms(self):
+        module = console_font()
+        import gzip
+
+        for size in ("16", "32"):
+            source = TERMINUS / f"ter-v{size}b.psf.gz"
+            if not source.is_file():
+                self.skipTest("terminus-font is not installed")
+            width, height, glyphs, table = module.read_font(gzip.decompress(source.read_bytes()))
+            module.patch(width, height, glyphs, table)
+            row_bytes = (width + 7) // 8
+
+            def glyph_of(char):
+                return glyphs[next(i for i, codepoints in enumerate(table) if ord(char) in codepoints)]
+
+            def inked(char):
+                glyph = glyph_of(char)
+                return [any(glyph[row * row_bytes:(row + 1) * row_bytes]) for row in range(height)]
+
+            def rows(char):
+                ink = inked(char)
+                return ink.index(True), len(ink) - 1 - ink[::-1].index(True)
+
+            with self.subTest(size=size):
+                # в is a lowercase letter: as tall as а, not as В.
+                self.assertEqual(rows("в")[0], rows("а")[0])
+                self.assertLess(rows("В")[0], rows("в")[0])
+                # д's foot reaches below the baseline, as у's tail does.
+                self.assertGreater(rows("д")[1], rows("а")[1])
+                # и has its diagonal, so it doesn't read as u.
+                self.assertNotEqual(glyph_of("и"), glyph_of("u"))
+
+    def test_patch_redraws_only_its_own_glyphs(self):
+        module = console_font()
+        import gzip
+
+        for size in ("16", "32"):
+            source = TERMINUS / f"ter-v{size}b.psf.gz"
+            if not source.is_file():
+                self.skipTest("terminus-font is not installed")
+            width, height, glyphs, table = module.read_font(gzip.decompress(source.read_bytes()))
+            original = list(glyphs)
+            try:
+                module.patch(width, height, glyphs, table)
+            except ValueError as error:
+                self.fail(error)
+            redrawn = {codepoint for index, glyph in enumerate(glyphs) if glyph != original[index]
+                       for codepoint in table[index]}
+
+            with self.subTest(size=size):
+                self.assertEqual({len(glyph) for glyph in glyphs}, {len(original[0])})
+                expected = {module.UPPER_HALF, module.LOWER_HALF} | set(module.RUSSIAN_FORMS[(width, height)])
+                self.assertEqual(redrawn, expected)
+
     def test_half_blocks_fill_the_top_or_bottom_half_of_the_cell(self):
         module = console_font()
         upper = module.half_block(16, 32, True)
