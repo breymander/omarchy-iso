@@ -78,7 +78,8 @@ for cfg in grub.cfg loopback.cfg; do
   grep -Fq -- "--id 'n1x-recovery'" "$src" || fail "$cfg lacks the N1x recovery entry"
   grep -Fq 'omarchy.n1x_recovery=1 acpi=nospcr' "$src" || fail "$cfg recovery entry lacks acpi=nospcr"
   grep -Fq "if [ \"\${product_name}\" == '83SS' ]; then" "$src" || fail "$cfg does not limit acpi_osi=! to the Lenovo Pro 9"
-  grep -Fq '${lenovo_osi}' "$src" || fail "$cfg does not pass the Lenovo OSI parameter"
+  grep -Fq -- "--id 'archlinux-lenovo'" "$src" || fail "$cfg has no Lenovo boot entry"
+  grep -Fq '${lenovo_osi}' "$src" && fail "$cfg puts a vendor variable on the shared linux line"
   source "$ROOT/builder/grub-platform.sh"
   for platform in x86_64 aarch64; do
     cp "$src" "$fixture/$platform-$cfg"
@@ -90,8 +91,11 @@ for cfg in grub.cfg loopback.cfg; do
     fi
     if [[ $platform == aarch64 ]]; then
       grep -Fq 'n1x-recovery' "$fixture/$platform-$cfg" || fail "the aarch64 menu lost the N1x recovery entry in $cfg"
+      grep -Fq 'acpi_osi=!' "$fixture/$platform-$cfg" || fail "aarch64 $cfg lost the Lenovo entry"
     else
       grep -Fq 'n1x-recovery' "$fixture/$platform-$cfg" && fail "recovery entry leaked into the $platform $cfg"
+      grep -Fq 'acpi_osi=!' "$fixture/$platform-$cfg" && fail "Lenovo OSI quirk leaked into the $platform $cfg"
+      grep -Fq 'archlinux-lenovo' "$fixture/$platform-$cfg" && fail "Lenovo boot entry leaked into the $platform $cfg"
     fi
     grep -Eq '^%N1X_ONLY' "$fixture/$platform-$cfg" && fail "template markers remain in $cfg"
     grep -Fqx 'timeout_style=hidden' "$fixture/$platform-$cfg" || fail "$cfg ($platform) shows the boot menu"
